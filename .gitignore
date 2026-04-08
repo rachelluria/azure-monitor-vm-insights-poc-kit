@@ -1,0 +1,3 @@
+# Local environment files — never commit real credentials or resource IDs
+config/poc.env
+config/*.env
