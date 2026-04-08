@@ -45,7 +45,8 @@ DCR_OTEL_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${DCR_RESOURCE_GRO
 # Built-in initiative: Configure Windows machines to run Azure Monitor Agent
 # and associate them to a Data Collection Rule
 # Reference: https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy
-POLICY_DEF_ID="/providers/Microsoft.Authorization/policySetDefinitions/9575b8b7-78ab-4281-b53b-d3c1ace2260b"
+# Note: Use GUID only — full resource path causes PolicySetDefinitionNotFound in some CLI versions
+POLICY_DEF_ID="9575b8b7-78ab-4281-b53b-d3c1ace2260b"
 
 echo "  Using policy initiative: $POLICY_DEF_ID"
 

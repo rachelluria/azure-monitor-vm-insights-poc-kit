@@ -36,6 +36,7 @@ config/
 scripts/
   deploy.sh                     # Deploy workspaces + DCRs
   assign-policy.sh              # Assign Azure Policy for AMA + DCR association
+  remediate-policy.sh           # Trigger remediation for existing Arc servers
   cleanup.sh                    # Remove policy assignments + DCRs
 README.md
 ```
@@ -86,14 +87,23 @@ chmod +x scripts/assign-policy.sh
 
 This assigns the built-in Azure Policy initiative *[Configure Windows machines to run Azure Monitor Agent and associate them to a Data Collection Rule](https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy)* to the target resource group. The policy will automatically install AMA and associate the DCRs with any Arc-enabled Windows servers in that RG.
 
-### 4) Validate
+### 4) Remediate existing servers
+
+```bash
+chmod +x scripts/remediate-policy.sh
+./scripts/remediate-policy.sh
+```
+
+This is the step that actually installs the Azure Monitor Agent and creates the DCR associations on existing Arc-enabled servers that are not yet compliant. Without this step, the policy only applies to newly created or updated resources. New servers added to the resource group after the policy is assigned will be handled automatically.
+
+### 5) Validate
 
 - Open the Azure Portal → Monitor → Data Collection Rules
 - Confirm `vm-insights-ready-dcr` and `vm-insights-ready-otel-dcr` exist
 - Navigate to Policy → Assignments and confirm the two policy assignments are active
 - Open a target machine in the Portal → Insights to verify data is flowing (may take up to 30 minutes for policy remediation)
 
-### 5) Cleanup (when done)
+### 6) Cleanup (when done)
 
 ```bash
 chmod +x scripts/cleanup.sh
@@ -110,5 +120,5 @@ The cleanup script removes the policy assignments and deletes both DCRs. It read
 
 - The Azure Policy initiative handles both AMA installation and DCR association automatically for Arc-enabled Windows servers in the target resource group.
 - `MONITOR_WORKSPACE_RESOURCE_GROUP` defaults to `LOG_ANALYTICS_RESOURCE_GROUP` if left blank.
-- Policy remediation runs on new and existing non-compliant resources. For existing servers, you may need to trigger a remediation task manually from the Portal.
+- Policy applies automatically to new servers. For existing servers, run `scripts/remediate-policy.sh` to trigger remediation.
 - Reference: [Deploy and configure Azure Monitor Agent using Azure Policy](https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy)
