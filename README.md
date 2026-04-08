@@ -31,13 +31,12 @@ Clicking **Configure** walks through a manual wizard that creates the necessary 
 ```
 bicep/
   vm-insights-dcr.bicep         # Bicep template: DCRs only
-  dcr-vminsights.json           # Reference export of the logs-based DCR
-  dcr-backup.json               # Reference export of a general-purpose AMA DCR
 config/
   poc.env.template              # Environment variables template
 scripts/
-  deploy.sh                     # Bash deploy script (Bicep + Azure Policy)
-  cleanup.sh                    # Bash cleanup script (remove policy + DCRs)
+  deploy.sh                     # Deploy workspaces + DCRs
+  assign-policy.sh              # Assign Azure Policy for AMA + DCR association
+  cleanup.sh                    # Remove policy assignments + DCRs
 README.md
 ```
 
@@ -76,16 +75,25 @@ Or point to a specific env file:
 ./scripts/deploy.sh config/my-other.env
 ```
 
-The script checks if the Log Analytics and Azure Monitor workspaces exist — if not, it creates them. Then it deploys the DCRs via Bicep and assigns the built-in Azure Policy initiative *[Configure Windows machines to run Azure Monitor Agent and associate them to a Data Collection Rule](https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy)* to the target resource group.
+The script checks if the Log Analytics and Azure Monitor workspaces exist — if not, it creates them. Then it deploys the DCRs via Bicep.
 
-### 3) Validate
+### 3) Assign Azure Policy
+
+```bash
+chmod +x scripts/assign-policy.sh
+./scripts/assign-policy.sh
+```
+
+This assigns the built-in Azure Policy initiative *[Configure Windows machines to run Azure Monitor Agent and associate them to a Data Collection Rule](https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy)* to the target resource group. The policy will automatically install AMA and associate the DCRs with any Arc-enabled Windows servers in that RG.
+
+### 4) Validate
 
 - Open the Azure Portal → Monitor → Data Collection Rules
 - Confirm `vm-insights-ready-dcr` and `vm-insights-ready-otel-dcr` exist
 - Navigate to Policy → Assignments and confirm the two policy assignments are active
 - Open a target machine in the Portal → Insights to verify data is flowing (may take up to 30 minutes for policy remediation)
 
-### 4) Cleanup (when done)
+### 5) Cleanup (when done)
 
 ```bash
 chmod +x scripts/cleanup.sh

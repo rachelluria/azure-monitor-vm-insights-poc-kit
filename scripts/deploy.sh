@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy VM Insights DCRs and assign Azure Policy for automatic AMA + DCR association
+# Deploy VM Insights Data Collection Rules (creates workspaces if needed)
 # Usage: ./deploy.sh [env-file]
 
 set -euo pipefail
@@ -24,7 +24,6 @@ required=(
     MONITOR_WORKSPACE_RESOURCE_GROUP
     MONITOR_WORKSPACE_NAME
     DCR_RESOURCE_GROUP
-    POLICY_SCOPE_RESOURCE_GROUP
 )
 
 for var in "${required[@]}"; do
@@ -33,10 +32,6 @@ for var in "${required[@]}"; do
         exit 1
     fi
 done
-
-# Build resource IDs
-WORKSPACE_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${LOG_ANALYTICS_RESOURCE_GROUP}/providers/Microsoft.OperationalInsights/workspaces/${LOG_ANALYTICS_WORKSPACE_NAME}"
-MONITORING_ACCOUNT_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${MONITOR_WORKSPACE_RESOURCE_GROUP}/providers/Microsoft.Monitor/accounts/${MONITOR_WORKSPACE_NAME}"
 
 # Set subscription context
 az account set --subscription "$SUBSCRIPTION_ID"
@@ -105,59 +100,6 @@ az deployment group create \
         workspaceResourceId="$WORKSPACE_RESOURCE_ID" \
         monitoringAccountResourceId="$MONITORING_ACCOUNT_RESOURCE_ID"
 
+echo ""
 echo "Data Collection Rules deployed successfully."
-
-# -------------------------------------------------------
-# Step 4: Assign Azure Policy for automatic AMA install + DCR association
-# -------------------------------------------------------
-echo ""
-echo "Assigning Azure Policy for automatic AMA install and DCR association in RG: $POLICY_SCOPE_RESOURCE_GROUP"
-
-SCOPE="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${POLICY_SCOPE_RESOURCE_GROUP}"
-DCR_LOGS_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${DCR_RESOURCE_GROUP}/providers/Microsoft.Insights/dataCollectionRules/${DCR_PREFIX}-dcr"
-DCR_OTEL_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${DCR_RESOURCE_GROUP}/providers/Microsoft.Insights/dataCollectionRules/${DCR_PREFIX}-otel-dcr"
-
-# Built-in initiative: Configure Windows machines to run Azure Monitor Agent
-# and associate them to a Data Collection Rule
-# Reference: https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy
-POLICY_DEF_ID="/providers/Microsoft.Authorization/policySetDefinitions/9575b8b7-78ab-4281-b53b-d3c1ace2260b"
-
-echo "  Using policy initiative: $POLICY_DEF_ID"
-
-# Assign for logs-based DCR
-az policy assignment create \
-    --name "vm-insights-dcr-logs-association" \
-    --display-name "VM Insights: AMA + logs DCR association" \
-    --policy-set-definition "$POLICY_DEF_ID" \
-    --scope "$SCOPE" \
-    --mi-system-assigned \
-    --location "${LOCATION:-westus2}" \
-    --params "{\"DcrResourceId\": {\"value\": \"${DCR_LOGS_ID}\"}}"
-echo "  Assigned policy initiative for logs-based DCR"
-
-# Assign for OTel DCR
-az policy assignment create \
-    --name "vm-insights-dcr-otel-association" \
-    --display-name "VM Insights: AMA + OTel DCR association" \
-    --policy-set-definition "$POLICY_DEF_ID" \
-    --scope "$SCOPE" \
-    --mi-system-assigned \
-    --location "${LOCATION:-westus2}" \
-    --params "{\"DcrResourceId\": {\"value\": \"${DCR_OTEL_ID}\"}}"
-echo "  Assigned policy initiative for OTel DCR"
-
-# Grant the policy managed identities the Monitoring Contributor role on the scope
-for assignment_name in vm-insights-dcr-logs-association vm-insights-dcr-otel-association; do
-    PRINCIPAL_ID=$(az policy assignment show --name "$assignment_name" --scope "$SCOPE" --query "identity.principalId" -o tsv)
-    az role assignment create \
-        --role "Monitoring Contributor" \
-        --assignee-object-id "$PRINCIPAL_ID" \
-        --assignee-principal-type "ServicePrincipal" \
-        --scope "$SCOPE" 2>/dev/null \
-        && echo "  Granted Monitoring Contributor to $assignment_name managed identity" \
-        || echo "  Role already assigned for $assignment_name"
-done
-
-echo ""
-echo "Deployment complete."
-echo "Azure Policy will automatically install AMA and associate DCRs with Arc-enabled Windows servers in RG '$POLICY_SCOPE_RESOURCE_GROUP'."
+echo "Run scripts/assign-policy.sh to assign Azure Policy for automatic AMA install and DCR association."
