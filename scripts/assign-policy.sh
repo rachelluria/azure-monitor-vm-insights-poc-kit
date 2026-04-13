@@ -19,6 +19,7 @@ source "$ENV_FILE"
 # Validate required variables
 required=(
     SUBSCRIPTION_ID
+    LOCATION
     DCR_RESOURCE_GROUP
     POLICY_SCOPE_RESOURCE_GROUP
 )
@@ -30,7 +31,6 @@ for var in "${required[@]}"; do
     fi
 done
 
-LOCATION="${LOCATION:-westus2}"
 DCR_PREFIX="${DCR_NAME_PREFIX:-vm-insights-ready}"
 
 # Set subscription context

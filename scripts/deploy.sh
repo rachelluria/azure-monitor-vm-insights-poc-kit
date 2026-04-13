@@ -19,6 +19,7 @@ source "$ENV_FILE"
 # Validate required variables
 required=(
     SUBSCRIPTION_ID
+    LOCATION
     LOG_ANALYTICS_RESOURCE_GROUP
     LOG_ANALYTICS_WORKSPACE_NAME
     MONITOR_WORKSPACE_RESOURCE_GROUP
@@ -35,8 +36,6 @@ done
 
 # Set subscription context
 az account set --subscription "$SUBSCRIPTION_ID"
-
-LOCATION="${LOCATION:-westus2}"
 
 # -------------------------------------------------------
 # Step 1: Ensure Log Analytics workspace exists
