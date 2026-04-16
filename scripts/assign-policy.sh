@@ -36,6 +36,16 @@ DCR_PREFIX="${DCR_NAME_PREFIX:-vm-insights-ready}"
 # Set subscription context
 az account set --subscription "$SUBSCRIPTION_ID"
 
+# Ensure required resource providers are registered. An unregistered
+# Microsoft.PolicyInsights provider is a known cause of "MissingSubscription".
+for rp in Microsoft.PolicyInsights Microsoft.Insights Microsoft.Monitor; do
+    state=$(az provider show --namespace "$rp" --subscription "$SUBSCRIPTION_ID" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
+    if [[ "$state" != "Registered" ]]; then
+        echo "  Registering resource provider: $rp"
+        az provider register --namespace "$rp" --subscription "$SUBSCRIPTION_ID" >/dev/null
+    fi
+done
+
 echo "Assigning Azure Policy for automatic AMA install and DCR association in RG: $POLICY_SCOPE_RESOURCE_GROUP"
 
 SCOPE="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${POLICY_SCOPE_RESOURCE_GROUP}"
@@ -45,8 +55,11 @@ DCR_OTEL_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${DCR_RESOURCE_GRO
 # Built-in initiative: Configure Windows machines to run Azure Monitor Agent
 # and associate them to a Data Collection Rule
 # Reference: https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy
-# Note: Use GUID only — full resource path causes PolicySetDefinitionNotFound in some CLI versions
-POLICY_DEF_ID="9575b8b7-78ab-4281-b53b-d3c1ace2260b"
+# Use the full tenant-level resource ID (NOT just the GUID). Older az CLI
+# versions (< ~2.55) resolve a bare GUID to a request URL missing the
+# subscription, producing "MissingSubscription". The full ID below is the
+# exact path the CLI ultimately calls, so it works on every CLI version.
+POLICY_DEF_ID="/providers/Microsoft.Authorization/policySetDefinitions/9575b8b7-78ab-4281-b53b-d3c1ace2260b"
 
 echo "  Using policy initiative: $POLICY_DEF_ID"
 
@@ -56,6 +69,7 @@ az policy assignment create \
     --display-name "VM Insights: AMA + logs DCR association" \
     --policy-set-definition "$POLICY_DEF_ID" \
     --scope "$SCOPE" \
+    --subscription "$SUBSCRIPTION_ID" \
     --mi-system-assigned \
     --location "$LOCATION" \
     --params "{\"DcrResourceId\": {\"value\": \"${DCR_LOGS_ID}\"}}"
@@ -67,6 +81,7 @@ az policy assignment create \
     --display-name "VM Insights: AMA + OTel DCR association" \
     --policy-set-definition "$POLICY_DEF_ID" \
     --scope "$SCOPE" \
+    --subscription "$SUBSCRIPTION_ID" \
     --mi-system-assigned \
     --location "$LOCATION" \
     --params "{\"DcrResourceId\": {\"value\": \"${DCR_OTEL_ID}\"}}"
@@ -74,12 +89,17 @@ echo "  Assigned policy initiative for OTel DCR"
 
 # Grant the policy managed identities the Monitoring Contributor role on the scope
 for assignment_name in vm-insights-dcr-logs-association vm-insights-dcr-otel-association; do
-    PRINCIPAL_ID=$(az policy assignment show --name "$assignment_name" --scope "$SCOPE" --query "identity.principalId" -o tsv)
+    PRINCIPAL_ID=$(az policy assignment show \
+        --name "$assignment_name" \
+        --scope "$SCOPE" \
+        --subscription "$SUBSCRIPTION_ID" \
+        --query "identity.principalId" -o tsv)
     az role assignment create \
         --role "Monitoring Contributor" \
         --assignee-object-id "$PRINCIPAL_ID" \
         --assignee-principal-type "ServicePrincipal" \
-        --scope "$SCOPE" 2>/dev/null \
+        --scope "$SCOPE" \
+        --subscription "$SUBSCRIPTION_ID" 2>/dev/null \
         && echo "  Granted Monitoring Contributor to $assignment_name managed identity" \
         || echo "  Role already assigned for $assignment_name"
 done
