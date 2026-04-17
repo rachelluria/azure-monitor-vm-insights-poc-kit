@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Disable Git Bash / MSYS automatic POSIX-to-Windows path conversion.
+# Without this, arguments like "/providers/Microsoft.Authorization/..." or
+# "/subscriptions/<id>/..." are rewritten (e.g. "C:/Program Files/Git/providers/...")
+# before being passed to az.cmd, which causes Azure CLI to send malformed URLs
+# and ARM to respond with "MissingSubscription".
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
 ENV_FILE="${1:-config/poc.env}"
 
 # Load environment variables from the env file
@@ -55,11 +63,18 @@ DCR_OTEL_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${DCR_RESOURCE_GRO
 # Built-in initiative: Configure Windows machines to run Azure Monitor Agent
 # and associate them to a Data Collection Rule
 # Reference: https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy
-# Use the full tenant-level resource ID (NOT just the GUID). Older az CLI
-# versions (< ~2.55) resolve a bare GUID to a request URL missing the
-# subscription, producing "MissingSubscription". The full ID below is the
-# exact path the CLI ultimately calls, so it works on every CLI version.
-POLICY_DEF_ID="/providers/Microsoft.Authorization/policySetDefinitions/9575b8b7-78ab-4281-b53b-d3c1ace2260b"
+#
+# Use the bare GUID. Two CLI bugs intersect here:
+#   * Some older CLI versions resolve the bare GUID to a URL missing the
+#     subscription, producing "MissingSubscription". Those versions are
+#     uncommon now (2.50+ resolves it correctly).
+#   * Passing the full /providers/.../policySetDefinitions/<guid> path triggers
+#     a bug in az's ResolvePolicyId (policy.py) where it strips back to the
+#     GUID, looks it up at subscription scope only, and crashes on None.get
+#     with "PolicySetDefinitionNotFound" for built-in initiatives.
+# The MSYS_NO_PATHCONV exports at the top of this script prevent Git Bash
+# from mangling other path-like arguments (e.g. --scope "/subscriptions/...").
+POLICY_DEF_ID="9575b8b7-78ab-4281-b53b-d3c1ace2260b"
 
 echo "  Using policy initiative: $POLICY_DEF_ID"
 
