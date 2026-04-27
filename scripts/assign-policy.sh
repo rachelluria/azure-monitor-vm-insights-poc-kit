@@ -102,21 +102,44 @@ az policy assignment create \
     --params "{\"DcrResourceId\": {\"value\": \"${DCR_OTEL_ID}\"}}"
 echo "  Assigned policy initiative for OTel DCR"
 
-# Grant the policy managed identities the Monitoring Contributor role on the scope
+# Grant the policy managed identities the roles declared by the policy
+# definitions inside the initiative. Each built-in deployIfNotExists policy
+# advertises the roles its MI must have via policyRule.then.details.roleDefinitionIds.
+# For the "Configure Windows machines to run AMA + associate DCR" initiative on
+# Arc-enabled servers, the union is:
+#   * Azure Connected Machine Resource Administrator
+#       - required by deployAzureMonitorAgentWindowsHybridVM
+#         (writes Microsoft.HybridCompute/.../extensions to install AMA)
+#   * Monitoring Contributor
+#       - required by associateDataCollectionRuleWindows
+#         (writes Microsoft.Insights/dataCollectionRuleAssociations)
+#   * Log Analytics Contributor
+#       - required by associateDataCollectionRuleWindows (LAW link permissions)
+# Without all three, remediation fails with PolicyDeploymentFailure because the
+# policy engine cannot create the underlying ARM deployment.
+REQUIRED_ROLES=(
+    "Azure Connected Machine Resource Administrator"
+    "Monitoring Contributor"
+    "Log Analytics Contributor"
+)
+
 for assignment_name in vm-insights-dcr-logs-association vm-insights-dcr-otel-association; do
     PRINCIPAL_ID=$(az policy assignment show \
         --name "$assignment_name" \
         --scope "$SCOPE" \
         --subscription "$SUBSCRIPTION_ID" \
         --query "identity.principalId" -o tsv)
-    az role assignment create \
-        --role "Monitoring Contributor" \
-        --assignee-object-id "$PRINCIPAL_ID" \
-        --assignee-principal-type "ServicePrincipal" \
-        --scope "$SCOPE" \
-        --subscription "$SUBSCRIPTION_ID" 2>/dev/null \
-        && echo "  Granted Monitoring Contributor to $assignment_name managed identity" \
-        || echo "  Role already assigned for $assignment_name"
+
+    for role in "${REQUIRED_ROLES[@]}"; do
+        az role assignment create \
+            --role "$role" \
+            --assignee-object-id "$PRINCIPAL_ID" \
+            --assignee-principal-type "ServicePrincipal" \
+            --scope "$SCOPE" \
+            --subscription "$SUBSCRIPTION_ID" 2>/dev/null \
+            && echo "  Granted '$role' to $assignment_name managed identity" \
+            || echo "  '$role' already assigned for $assignment_name"
+    done
 done
 
 echo ""

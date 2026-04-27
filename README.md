@@ -36,6 +36,7 @@ config/
 scripts/
   deploy.sh                     # Deploy workspaces + DCRs
   assign-policy.sh              # Assign Azure Policy for AMA + DCR association
+  evaluate-policy.sh            # (Optional) Force a fresh policy compliance evaluation
   remediate-policy.sh           # Trigger remediation for existing Arc servers
   cleanup.sh                    # Remove policy assignments + DCRs
 README.md
@@ -87,7 +88,20 @@ chmod +x scripts/assign-policy.sh
 
 This assigns the built-in Azure Policy initiative *[Configure Windows machines to run Azure Monitor Agent and associate them to a Data Collection Rule](https://learn.microsoft.com/en-us/azure/azure-arc/servers/deploy-ama-policy)* to the target resource group. The policy will automatically install AMA and associate the DCRs with any Arc-enabled Windows servers in that RG.
 
-### 4) Remediate existing servers
+### 4) (Optional) Force a policy evaluation
+
+```bash
+chmod +x scripts/evaluate-policy.sh
+./scripts/evaluate-policy.sh
+```
+
+Azure Policy refreshes its compliance dataset on its own cadence (typically every ~24h), so a freshly assigned policy may show **0 resources** in the portal for a while. This script triggers an on-demand compliance scan against the policy assignments you just created and prints the current compliance state per resource. Pass `--wait` to block until the scan completes (10–30 min) before reporting:
+
+```bash
+./scripts/evaluate-policy.sh config/poc.env --wait
+```
+
+### 5) Remediate existing servers
 
 ```bash
 chmod +x scripts/remediate-policy.sh
@@ -96,14 +110,14 @@ chmod +x scripts/remediate-policy.sh
 
 This is the step that actually installs the Azure Monitor Agent and creates the DCR associations on existing Arc-enabled servers that are not yet compliant. Without this step, the policy only applies to newly created or updated resources. New servers added to the resource group after the policy is assigned will be handled automatically.
 
-### 5) Validate
+### 6) Validate
 
 - Open the Azure Portal → Monitor → Data Collection Rules
 - Confirm `vm-insights-ready-dcr` and `vm-insights-ready-otel-dcr` exist
 - Navigate to Policy → Assignments and confirm the two policy assignments are active
 - Open a target machine in the Portal → Insights to verify data is flowing (may take up to 30 minutes for policy remediation)
 
-### 6) Cleanup (when done)
+### 7) Cleanup (when done)
 
 ```bash
 chmod +x scripts/cleanup.sh
