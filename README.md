@@ -38,7 +38,11 @@ scripts/
   assign-policy.sh              # Assign Azure Policy for AMA + DCR association
   evaluate-policy.sh            # (Optional) Force a fresh policy compliance evaluation
   remediate-policy.sh           # Trigger remediation for existing Arc servers
+  deploy-workbook.sh            # (Optional) Deploy the patch & inventory compliance workbook
   cleanup.sh                    # Remove policy assignments + DCRs
+workbooks/
+  server-patch-inventory-compliance.workbook.json   # Azure Monitor workbook template
+  README.md                     # Workbook tabs, parameters, prerequisites
 README.md
 ```
 
@@ -117,7 +121,18 @@ This is the step that actually installs the Azure Monitor Agent and creates the 
 - Navigate to Policy → Assignments and confirm the two policy assignments are active
 - Open a target machine in the Portal → Insights to verify data is flowing (may take up to 30 minutes for policy remediation)
 
-### 7) Cleanup (when done)
+### 7) (Optional) Deploy the patch & inventory compliance workbook
+
+```bash
+chmod +x scripts/deploy-workbook.sh
+./scripts/deploy-workbook.sh
+```
+
+Deploys [workbooks/server-patch-inventory-compliance.workbook.json](workbooks/server-patch-inventory-compliance.workbook.json) as a `Microsoft.Insights/workbooks` resource. It surfaces OS/build inventory, CU compliance (with a tag-driven production n-1 rule), install + reboot status, patch-group rollups, exception lists, and Arc/Update Manager data health. See [workbooks/README.md](workbooks/README.md) for the full tab map and parameter reference.
+
+The target resource group comes from `WORKBOOK_RESOURCE_GROUP` in `config/poc.env` and falls back to `LOG_ANALYTICS_RESOURCE_GROUP`. Re-running updates the same workbook (the underlying GUID is derived from `WORKBOOK_DISPLAY_NAME`).
+
+### 8) Cleanup (when done)
 
 ```bash
 chmod +x scripts/cleanup.sh
@@ -129,6 +144,8 @@ The cleanup script removes the policy assignments and deletes both DCRs. It read
 ```bash
 ./scripts/cleanup.sh config/my-other.env
 ```
+
+> **Note:** `cleanup.sh` does **not** delete the workbook. Remove it via the portal (Monitor → Workbooks) or `az resource delete --ids <workbookResourceId>`.
 
 ## Notes / constraints
 
