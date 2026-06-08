@@ -4,7 +4,7 @@
     {
       "type": 1,
       "content": {
-        "json": "# Server Patch & Inventory Compliance\n\nOperational visibility over Arc-enabled and Azure VM Windows estate, focused on **OS / build / CU compliance, reboot status, patch-group exceptions, and data freshness**.\n\nUse the filters below, then walk the tabs from **Overview → Exceptions** to identify which servers are behind, why, whether they rebooted, whether that's expected, and who needs to act.\n\n> Data sources: Azure Resource Graph (`patchassessmentresources`, `patchinstallationresources`, `Microsoft.HybridCompute/machines`, `Microsoft.Compute/virtualMachines`) and Log Analytics (`Heartbeat`, `ConfigurationChange`). Requires Azure Update Manager periodic assessment enabled."
+        "json": "# Server Patch & Inventory Compliance\n\nOperational visibility over Arc-enabled and Azure VM Windows estate, focused on **OS / build / CU compliance, reboot status, patch-group cadence, and data freshness**.\n\nUse the filters below, then walk the tabs from **Overview → Data Health** to identify which servers are behind, why, whether they rebooted, whether that's expected, and who needs to act.\n\n> Data sources: Azure Resource Graph (`patchassessmentresources`, `patchinstallationresources`, `Microsoft.HybridCompute/machines`, `Microsoft.Compute/virtualMachines`) and Log Analytics (`Heartbeat`, `ConfigurationChange`). Requires Azure Update Manager periodic assessment enabled."
       },
       "name": "title"
     },
@@ -51,24 +51,6 @@
             "value": "PatchGroup"
           },
           {
-            "id": "env-tag",
-            "version": "KqlParameterItem/1.0",
-            "name": "EnvironmentTag",
-            "label": "Environment tag",
-            "description": "Tag name identifying production vs non-prod. Used by the n-1 production rule on the CU Compliance tab.",
-            "type": 1,
-            "value": "Environment"
-          },
-          {
-            "id": "prod-value",
-            "version": "KqlParameterItem/1.0",
-            "name": "ProdTagValue",
-            "label": "Prod tag value",
-            "description": "Value of the Environment tag that means production. Production is allowed to be 1 release behind (n-1).",
-            "type": 1,
-            "value": "Production"
-          },
-          {
             "id": "window-hours",
             "version": "KqlParameterItem/1.0",
             "name": "WindowHours",
@@ -95,6 +77,18 @@
               ]
             },
             "value": { "durationMs": 2592000000 }
+          },
+          {
+            "id": "target-builds",
+            "version": "KqlParameterItem/1.0",
+            "name": "TargetBuilds",
+            "label": "Target builds (override)",
+            "description": "Optional: pin the latest CU build per OS. Leave blank to let the workbook auto-derive the target from the highest build observed in your estate. Format: comma-separated `'OSVersion','Build'` pairs, e.g. `'Windows Server 2022','10.0.20348.2700','Windows Server 2019','10.0.17763.6189'`. Refresh after each Patch Tuesday from learn.microsoft.com Windows release health.",
+            "type": 1,
+            "value": "",
+            "conditionalVisibilities": [
+              { "parameterName": "selectedTab", "comparison": "isEqualTo", "value": "cu" }
+            ]
           }
         ],
         "style": "pills",
@@ -112,11 +106,11 @@
           { "id": "tab-overview",  "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "Overview",            "subTarget": "overview",   "style": "link" },
           { "id": "tab-inv",       "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "OS & Build Inventory", "subTarget": "inventory",  "style": "link" },
           { "id": "tab-cu",        "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "CU Compliance",        "subTarget": "cu",         "style": "link" },
+          { "id": "tab-failures",  "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "Failures",             "subTarget": "failures",   "style": "link" },
+          { "id": "tab-pending",   "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "Pending Updates",      "subTarget": "pending",    "style": "link" },
           { "id": "tab-reboot",    "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "Reboot Compliance",    "subTarget": "reboot",     "style": "link" },
           { "id": "tab-groups",    "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "Patch Groups",         "subTarget": "groups",     "style": "link" },
-          { "id": "tab-exc",       "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "Exceptions",           "subTarget": "exceptions", "style": "link" },
-          { "id": "tab-health",    "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "Data Health",          "subTarget": "health",     "style": "link" },
-          { "id": "tab-sccm",      "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "SCCM Comparison",      "subTarget": "sccm",       "style": "link" }
+          { "id": "tab-health",    "cellValue": "selectedTab", "linkTarget": "parameter", "linkLabel": "Data Health",          "subTarget": "health",     "style": "link" }
         ]
       },
       "name": "tabs"
@@ -216,7 +210,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName, properties.storageProfile.imageReference.offer))\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend OSVersion = case(\n    osName has '2012 R2','Windows Server 2012 R2',\n    osName has '2012','Windows Server 2012',\n    osName has '2016','Windows Server 2016',\n    osName has '2019','Windows Server 2019',\n    osName has '2022','Windows Server 2022',\n    osName has '2025','Windows Server 2025',\n    coalesce(osName,'Unknown'))\n| summarize Servers = count() by OSVersion\n| order by Servers desc",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n| extend osSku = tostring(coalesce(properties.osSku, properties.extended.instanceView.osName, properties.storageProfile.imageReference.sku, properties.storageProfile.imageReference.offer))\n| extend OSVersion = case(\n    osVersion startswith '6.3.9600' or osSku has '2012-R2' or osSku has '2012 R2','Windows Server 2012 R2',\n    osVersion startswith '10.0.14393' or osSku has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osSku has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osSku has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osSku has '2025','Windows Server 2025',\n    iif(isempty(osSku),'Unknown', osSku))\n| summarize Servers = count() by OSVersion\n| order by Servers desc",
               "size": 0,
               "title": "Servers by Windows Server version",
               "queryType": 1,
@@ -231,7 +225,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "patchassessmentresources\n| where type =~ 'microsoft.hybridcompute/machines/patchassessmentresults' or type =~ 'microsoft.compute/virtualmachines/patchassessmentresults'\n| extend machineId = tolower(tostring(split(id, '/patchAssessmentResults/')[0]))\n| extend AssessedOn = todatetime(properties.lastModifiedDateTime)\n| summarize arg_max(AssessedOn, properties) by machineId\n| extend Critical = toint(properties.availablePatchCountByClassification.critical),\n         Security = toint(properties.availablePatchCountByClassification.security),\n         Other    = toint(properties.availablePatchCountByClassification.other)\n| summarize Critical = sum(Critical), Security = sum(Security), Other = sum(Other)\n| project Classification = pack_array('Critical','Security','Other'), Count = pack_array(Critical, Security, Other)\n| mv-expand Classification to typeof(string), Count to typeof(long)",
+              "query": "patchassessmentresources\n| where type =~ 'microsoft.hybridcompute/machines/patchassessmentresults' or type =~ 'microsoft.compute/virtualmachines/patchassessmentresults'\n| extend machineId = tolower(tostring(split(id, '/patchAssessmentResults/')[0]))\n| extend AssessedOn = todatetime(properties.lastModifiedDateTime)\n| summarize arg_max(AssessedOn, properties) by machineId\n| extend Cls = properties.availablePatchCountByClassification\n| extend Critical = toint(coalesce(Cls.critical, 0)),\n         Security = toint(coalesce(Cls.security, 0)),\n         UpdateRollups = toint(coalesce(Cls.updateRollup, 0)),\n         Other = toint(coalesce(Cls.definition, 0)) + toint(coalesce(Cls.featurePack, 0)) + toint(coalesce(Cls.servicePack, 0)) + toint(coalesce(Cls.tools, 0)) + toint(coalesce(Cls.updates, 0))\n| summarize Critical = sum(Critical), Security = sum(Security), UpdateRollups = sum(UpdateRollups), Other = sum(Other)\n| project Classification = pack_array('Critical','Security','UpdateRollups','Other'), Count = pack_array(Critical, Security, UpdateRollups, Other)\n| mv-expand Classification to typeof(string), Count to typeof(long)\n| where Count > 0",
               "size": 0,
               "title": "Pending updates by classification",
               "queryType": 1,
@@ -263,7 +257,45 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName, properties.storageProfile.imageReference.offer))\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion, properties.storageProfile.imageReference.exactVersion))\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend OSVersion = case(\n    osName has '2012 R2','Windows Server 2012 R2',\n    osName has '2016','Windows Server 2016',\n    osName has '2019','Windows Server 2019',\n    osName has '2022','Windows Server 2022',\n    osName has '2025','Windows Server 2025',\n    coalesce(osName,'Unknown'))\n| extend Build = coalesce(osVersion, 'Unknown'),\n         CULevel = tostring(split(coalesce(osVersion,''), '.')[3])\n| project Server = name, ResourceGroup = resourceGroup, OSVersion, Build, CULevel, Source = iif(type =~ 'microsoft.hybridcompute/machines','Arc','Azure VM'), id",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n| extend osSku = tostring(coalesce(properties.osSku, properties.extended.instanceView.osName, properties.storageProfile.imageReference.sku, properties.storageProfile.imageReference.offer))\n| extend OSVersion = case(\n    osVersion startswith '6.3.9600' or osSku has '2012-R2' or osSku has '2012 R2','Windows Server 2012 R2',\n    osVersion startswith '10.0.14393' or osSku has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osSku has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osSku has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osSku has '2025','Windows Server 2025',\n    iif(isempty(osSku),'Unknown', osSku))\n| summarize Servers = count() by OSVersion\n| extend Order = case(OSVersion == 'Windows Server 2012 R2', 0, OSVersion == 'Windows Server 2016', 1, OSVersion == 'Windows Server 2019', 2, OSVersion == 'Windows Server 2022', 3, OSVersion == 'Windows Server 2025', 4, 5)\n| order by Order asc",
+              "size": 3,
+              "title": "Server count by Windows Server version",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "OSVersion", "formatter": 1 },
+                "leftContent": { "columnMatch": "Servers", "formatter": 12, "formatOptions": { "palette": "blue" } },
+                "showBorder": true
+              }
+            },
+            "name": "inv-os-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n| extend osSku = tostring(coalesce(properties.osSku, properties.extended.instanceView.osName, properties.storageProfile.imageReference.sku, properties.storageProfile.imageReference.offer))\n| extend OSVersion = case(\n    osVersion startswith '6.3.9600' or osSku has '2012-R2' or osSku has '2012 R2','Windows Server 2012 R2',\n    osVersion startswith '10.0.14393' or osSku has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osSku has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osSku has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osSku has '2025','Windows Server 2025',\n    iif(isempty(osSku),'Unknown', osSku))\n| summarize Arc = countif(type =~ 'microsoft.hybridcompute/machines'),\n            [\"Azure VM\"] = countif(type =~ 'microsoft.compute/virtualmachines'),\n            Total = count()\n        by OSVersion\n| order by Total desc",
+              "size": 0,
+              "title": "Server counts by OS version (Arc vs Azure VM)",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "Total", "formatter": 8, "formatOptions": { "palette": "blue", "min": 0 } }
+                ]
+              }
+            },
+            "customWidth": "50",
+            "name": "inv-os-source"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n| extend osSku = tostring(coalesce(properties.osSku, properties.extended.instanceView.osName, properties.storageProfile.imageReference.sku, properties.storageProfile.imageReference.offer))\n| extend OSVersion = case(\n    osVersion startswith '6.3.9600' or osSku has '2012-R2' or osSku has '2012 R2','Windows Server 2012 R2',\n    osVersion startswith '10.0.14393' or osSku has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osSku has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osSku has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osSku has '2025','Windows Server 2025',\n    iif(isempty(osSku),'Unknown', osSku))\n| extend Build = iif(isempty(osVersion),'Unknown', osVersion),\n         CULevel = tostring(split(coalesce(osVersion,''), '.')[3])\n| project Server = name, ResourceGroup = resourceGroup, OSVersion, OSEdition = osSku, Build, CULevel, Source = iif(type =~ 'microsoft.hybridcompute/machines','Arc','Azure VM'), id",
               "size": 0,
               "title": "Server estate — drill: OS → Build → Server",
               "queryType": 1,
@@ -287,7 +319,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName, properties.storageProfile.imageReference.offer))\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion, properties.storageProfile.imageReference.exactVersion))\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend OSVersion = case(\n    osName has '2016','Windows Server 2016',\n    osName has '2019','Windows Server 2019',\n    osName has '2022','Windows Server 2022',\n    osName has '2025','Windows Server 2025',\n    coalesce(osName,'Other'))\n| summarize Servers = count() by OSVersion, Build = coalesce(osVersion, 'Unknown')\n| order by OSVersion, Servers desc",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n| extend osSku = tostring(coalesce(properties.osSku, properties.extended.instanceView.osName, properties.storageProfile.imageReference.sku, properties.storageProfile.imageReference.offer))\n| extend OSVersion = case(\n    osVersion startswith '6.3.9600' or osSku has '2012-R2' or osSku has '2012 R2','Windows Server 2012 R2',\n    osVersion startswith '10.0.14393' or osSku has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osSku has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osSku has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osSku has '2025','Windows Server 2025',\n    iif(isempty(osSku),'Other', osSku))\n| summarize Servers = count() by OSVersion, Build = iif(isempty(osVersion),'Unknown', osVersion)\n| order by OSVersion, Servers desc",
               "size": 0,
               "title": "Build distribution within each OS version",
               "queryType": 1,
@@ -296,6 +328,7 @@
               "visualization": "barchart",
               "chartSettings": { "group": "OSVersion", "createOtherGroup": 0 }
             },
+            "customWidth": "50",
             "name": "inv-build-chart"
           }
         ]
@@ -312,14 +345,14 @@
         "items": [
           {
             "type": 1,
-            "content": { "json": "## CU Compliance\nLatest known build per OS is treated as the target. Production servers (tag `{EnvironmentTag} = {ProdTagValue}`) are allowed to be **one build behind (n-1)**.\n\n> **Not using tags yet?** No action needed. With no `{EnvironmentTag}` tag set, the n-1 allowance never fires and every server must be on the latest observed build. When you later tag prod servers, this tab starts honoring n-1 automatically." },
+            "content": { "json": "## CU Compliance\nEvery server must be on the latest build per OS family **and** have zero pending Critical, Security, or UpdateRollups updates reported by Azure Update Manager. Anything else is Non-compliant.\n\n> **`TargetBuild` defaults to the highest build observed in your estate** per OS family (column `TargetSource` shows `estate`). To pin to Microsoft's published Patch Tuesday build instead, fill in the **Target builds (override)** parameter above with `'<OSVersion>','<Build>'` pairs — those rows will show `TargetSource = override`.\n>\n> Azure Resource Graph and Update Manager don't expose the *currently published* CU build per OS as a queryable field, so the override is how you keep this in sync with the Microsoft release cycle." },
             "name": "cu-title"
           },
           {
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n| extend OSVersion = case(\n    osVersion startswith '10.0.14393' or osName has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osName has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osName has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osName has '2025','Windows Server 2025',\n    osVersion startswith '6.3.9600','Windows Server 2012 R2',\n    'Other')\n| extend Env = tostring(tags['{EnvironmentTag}']),\n         PatchGroup = tostring(tags['{PatchGroupTag}']),\n         MachineId = tolower(id),\n         Server = name,\n         RG = resourceGroup,\n         Build = iif(isempty(osVersion),'Unknown', osVersion)\n| join kind=leftouter (\n    resources\n    | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n    | extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n    | where osType == 'windows'\n    | extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n    | extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n    | extend OSVersion = case(\n        osVersion startswith '10.0.14393' or osName has '2016','Windows Server 2016',\n        osVersion startswith '10.0.17763' or osName has '2019','Windows Server 2019',\n        osVersion startswith '10.0.20348' or osName has '2022','Windows Server 2022',\n        osVersion startswith '10.0.26100' or osName has '2025','Windows Server 2025',\n        osVersion startswith '6.3.9600','Windows Server 2012 R2',\n        'Other')\n    | where isnotempty(osVersion)\n    | summarize TargetBuild = max(osVersion) by OSVersion\n) on OSVersion\n| extend IsProd = (tolower(Env) == tolower('{ProdTagValue}'))\n| extend CurrentRev = toint(tostring(split(Build,'.')[3])), TargetRev = toint(tostring(split(TargetBuild,'.')[3]))\n| extend DriftRevisions = TargetRev - CurrentRev\n| extend Status = case(\n    Build == TargetBuild, 'Compliant',\n    IsProd and DriftRevisions >= 1, 'Compliant (n-1 prod)',\n    'Non-compliant')\n| project Server, ResourceGroup = RG, OSVersion, Build, TargetBuild, DriftRevisions, IsProd, PatchGroup, Status, MachineId",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n| extend OSVersion = case(\n    osVersion startswith '10.0.14393' or osName has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osName has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osName has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osName has '2025','Windows Server 2025',\n    osVersion startswith '6.3.9600','Windows Server 2012 R2',\n    'Other')\n| extend PatchGroup = tostring(tags['{PatchGroupTag}']),\n         MachineId = tolower(id),\n         Server = name,\n         RG = resourceGroup,\n         Build = iif(isempty(osVersion),'Unknown', osVersion)\n| join kind=leftouter (\n    resources\n    | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n    | extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n    | where osType == 'windows'\n    | extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n    | extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n    | extend OSVersion = case(\n        osVersion startswith '10.0.14393' or osName has '2016','Windows Server 2016',\n        osVersion startswith '10.0.17763' or osName has '2019','Windows Server 2019',\n        osVersion startswith '10.0.20348' or osName has '2022','Windows Server 2022',\n        osVersion startswith '10.0.26100' or osName has '2025','Windows Server 2025',\n        osVersion startswith '6.3.9600','Windows Server 2012 R2',\n        'Other')\n    | where isnotempty(osVersion)\n    | summarize EstateMax = max(osVersion) by OSVersion\n    | join kind=leftouter (datatable(OSVersion:string, OverrideBuild:string) [ {TargetBuilds} ]) on OSVersion\n    | extend TargetBuild = coalesce(OverrideBuild, EstateMax), TargetSource = iif(isnotempty(OverrideBuild),'override','estate')\n    | project OSVersion, TargetBuild, TargetSource\n) on OSVersion\n| join kind=leftouter (\n    patchassessmentresources\n    | where type endswith 'patchassessmentresults/softwarepatches'\n    | extend MachineId = tolower(tostring(split(id, '/patchAssessmentResults/')[0]))\n    | extend Cls = tostring(properties.classifications[0])\n    | where Cls in ('Critical','Security','UpdateRollups')\n    | summarize PendingSecurityUpdates = count() by MachineId\n) on MachineId\n| extend PendingSecurityUpdates = coalesce(PendingSecurityUpdates, 0)\n| extend CurrentRev = toint(tostring(split(Build,'.')[3])), TargetRev = toint(tostring(split(TargetBuild,'.')[3]))\n| extend DriftRevisions = TargetRev - CurrentRev\n| extend Status = case(\n    PendingSecurityUpdates > 0, 'Non-compliant (missing updates)',\n    Build == TargetBuild, 'Compliant',\n    'Non-compliant (behind)')\n| project Server, ResourceGroup = RG, OSVersion, Build, TargetBuild, TargetSource, DriftRevisions, PendingSecurityUpdates, PatchGroup, Status, MachineId",
               "size": 0,
               "title": "CU compliance by server",
               "queryType": 1,
@@ -334,9 +367,8 @@
                     "formatOptions": {
                       "thresholdsOptions": "icons",
                       "thresholdsGrid": [
-                        { "operator": "==", "thresholdValue": "Compliant",            "representation": "success", "text": "{0}" },
-                        { "operator": "==", "thresholdValue": "Compliant (n-1 prod)", "representation": "success", "text": "{0}" },
-                        { "operator": "Default",                                       "representation": "error",   "text": "{0}" }
+                        { "operator": "==", "thresholdValue": "Compliant", "representation": "success", "text": "{0}" },
+                        { "operator": "Default",                            "representation": "error",   "text": "{0}" }
                       ]
                     }
                   }
@@ -351,15 +383,58 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n| extend OSVersion = case(\n    osName has '2016','Windows Server 2016',\n    osName has '2019','Windows Server 2019',\n    osName has '2022','Windows Server 2022',\n    osName has '2025','Windows Server 2025',\n    'Other')\n| extend Env = tostring(tags['{EnvironmentTag}']), Build = iif(isempty(osVersion),'Unknown', osVersion)\n| join kind=leftouter (\n    resources\n    | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n    | extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n    | where osType == 'windows'\n    | extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n    | extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n    | extend OSVersion = case(\n        osName has '2016','Windows Server 2016',\n        osName has '2019','Windows Server 2019',\n        osName has '2022','Windows Server 2022',\n        osName has '2025','Windows Server 2025',\n        'Other')\n    | where isnotempty(osVersion)\n    | summarize TargetBuild = max(osVersion) by OSVersion\n) on OSVersion\n| extend IsProd = (tolower(Env) == tolower('{ProdTagValue}'))\n| extend DriftRevisions = toint(tostring(split(TargetBuild,'.')[3])) - toint(tostring(split(Build,'.')[3]))\n| extend IsCompliant = (Build == TargetBuild) or (IsProd and DriftRevisions <= 1)\n| summarize Servers = count(), CompliantCount = countif(IsCompliant) by OSVersion\n| extend [\"Compliant %\"] = iif(Servers == 0, todouble(0), round(100.0 * CompliantCount / Servers, 1))\n| order by OSVersion asc",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n| extend OSVersion = case(\n    osVersion startswith '10.0.14393' or osName has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osName has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osName has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osName has '2025','Windows Server 2025',\n    osVersion startswith '6.3.9600','Windows Server 2012 R2',\n    'Other')\n| extend MachineId = tolower(id), Build = iif(isempty(osVersion),'Unknown', osVersion)\n| join kind=leftouter (\n    resources\n    | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n    | extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n    | where osType == 'windows'\n    | extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n    | extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n    | extend OSVersion = case(\n        osVersion startswith '10.0.14393' or osName has '2016','Windows Server 2016',\n        osVersion startswith '10.0.17763' or osName has '2019','Windows Server 2019',\n        osVersion startswith '10.0.20348' or osName has '2022','Windows Server 2022',\n        osVersion startswith '10.0.26100' or osName has '2025','Windows Server 2025',\n        osVersion startswith '6.3.9600','Windows Server 2012 R2',\n        'Other')\n    | where isnotempty(osVersion)\n    | summarize EstateMax = max(osVersion) by OSVersion\n    | join kind=leftouter (datatable(OSVersion:string, OverrideBuild:string) [ {TargetBuilds} ]) on OSVersion\n    | extend TargetBuild = coalesce(OverrideBuild, EstateMax)\n    | project OSVersion, TargetBuild\n) on OSVersion\n| join kind=leftouter (\n    patchassessmentresources\n    | where type endswith 'patchassessmentresults/softwarepatches'\n    | extend MachineId = tolower(tostring(split(id, '/patchAssessmentResults/')[0]))\n    | extend Cls = tostring(properties.classifications[0])\n    | where Cls in ('Critical','Security','UpdateRollups')\n    | summarize PendingSecurityUpdates = count() by MachineId\n) on MachineId\n| extend PendingSecurityUpdates = coalesce(PendingSecurityUpdates, 0)\n| extend IsCompliant = (PendingSecurityUpdates == 0) and (Build == TargetBuild)\n| summarize Servers = count(), CompliantCount = countif(IsCompliant) by OSVersion\n| extend [\"Compliant %\"] = iif(Servers == 0, todouble(0), round(100.0 * CompliantCount / Servers, 1))\n| project OSVersion, Servers, Compliant = CompliantCount, [\"Compliant %\"]\n| order by [\"Compliant %\"] asc",
               "size": 0,
-              "title": "Compliance % by OS version",
+              "title": "Compliance by OS version — % of servers on target build with zero pending Critical/Security updates",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [ "{Subscriptions}" ],
-              "visualization": "barchart"
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "Compliant %", "formatter": 8, "formatOptions": { "palette": "redGreen", "min": 0, "max": 100 } }
+                ],
+                "filter": true
+              }
             },
             "name": "cu-by-os"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n| extend osSku = tostring(coalesce(properties.osSku, properties.extended.instanceView.osName, properties.storageProfile.imageReference.sku))\n| extend OSVersion = case(\n    osVersion startswith '6.3.9600','Windows Server 2012 R2',\n    osVersion startswith '10.0.14393','Windows Server 2016',\n    osVersion startswith '10.0.17763','Windows Server 2019',\n    osVersion startswith '10.0.20348','Windows Server 2022',\n    osVersion startswith '10.0.26100','Windows Server 2025',\n    iif(isempty(osSku),'Other', osSku))\n| where isnotempty(osVersion)\n| summarize Servers = count() by OSVersion, Build = osVersion\n| join kind=leftouter (\n    resources\n    | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n    | extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n    | extend OSVersion = case(\n        osVersion startswith '6.3.9600','Windows Server 2012 R2',\n        osVersion startswith '10.0.14393','Windows Server 2016',\n        osVersion startswith '10.0.17763','Windows Server 2019',\n        osVersion startswith '10.0.20348','Windows Server 2022',\n        osVersion startswith '10.0.26100','Windows Server 2025','Other')\n    | where isnotempty(osVersion)\n    | summarize TargetBuild = max(osVersion) by OSVersion\n) on OSVersion\n| extend IsTarget = (Build == TargetBuild)\n| extend Target = iif(IsTarget, '\u2605 latest', '')\n| project OSVersion, Build, Servers, Target\n| order by OSVersion asc, Servers desc",
+              "size": 0,
+              "title": "Build spread per OS \u2014 how many servers sit on each build (\u2605 = latest build seen in your estate)",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "Servers", "formatter": 8, "formatOptions": { "palette": "blue", "min": 0 } }
+                ],
+                "filter": true
+              }
+            },
+            "customWidth": "50",
+            "name": "cu-build-distribution"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n| extend OSVersion = case(\n    osVersion startswith '6.3.9600','Windows Server 2012 R2',\n    osVersion startswith '10.0.14393','Windows Server 2016',\n    osVersion startswith '10.0.17763','Windows Server 2019',\n    osVersion startswith '10.0.20348','Windows Server 2022',\n    osVersion startswith '10.0.26100','Windows Server 2025',\n    'Other')\n| where isnotempty(osVersion)\n| extend CurrentRev = toint(tostring(split(osVersion,'.')[3]))\n| join kind=leftouter (\n    resources\n    | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n    | extend osVersion = tostring(coalesce(properties.osVersion, properties.extended.instanceView.osVersion))\n    | extend OSVersion = case(\n        osVersion startswith '6.3.9600','Windows Server 2012 R2',\n        osVersion startswith '10.0.14393','Windows Server 2016',\n        osVersion startswith '10.0.17763','Windows Server 2019',\n        osVersion startswith '10.0.20348','Windows Server 2022',\n        osVersion startswith '10.0.26100','Windows Server 2025','Other')\n    | where isnotempty(osVersion)\n    | extend Rev = toint(tostring(split(osVersion,'.')[3]))\n    | summarize TargetRev = max(Rev) by OSVersion\n) on OSVersion\n| extend Drift = TargetRev - CurrentRev\n| extend Bucket = case(Drift == 0,'0 \u2014 on target', Drift between (1 .. 1),'1 revision behind', Drift between (2 .. 3),'2-3 revisions behind', Drift between (4 .. 6),'4-6 revisions behind','7+ revisions behind')\n| summarize Servers = count() by Bucket, OSVersion\n| order by OSVersion asc",
+              "size": 0,
+              "title": "Servers by revisions behind target build",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "visualization": "barchart",
+              "chartSettings": { "group": "Bucket", "createOtherGroup": 0 }
+            },
+            "customWidth": "50",
+            "name": "cu-drift-histogram"
           }
         ]
       },
@@ -419,6 +494,175 @@
         "items": [
           {
             "type": 1,
+            "content": { "json": "## Pending Updates\nEverything Azure Update Manager has assessed as **not yet installed**. Use this as your queue: which KBs are sitting unapplied, how many machines need each one, and how long they've been outstanding." },
+            "name": "pending-title"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "patchassessmentresources\n| where type =~ 'microsoft.hybridcompute/machines/patchassessmentresults' or type =~ 'microsoft.compute/virtualmachines/patchassessmentresults'\n| extend Cls = properties.availablePatchCountByClassification\n| extend MachineId = tolower(tostring(split(id, '/patchAssessmentResults/')[0])),\n         LastAssessed = todatetime(properties.lastModifiedDateTime),\n         Critical = toint(coalesce(Cls.critical, 0)),\n         Security = toint(coalesce(Cls.security, 0)),\n         UpdateRollups = toint(coalesce(Cls.updateRollup, 0)),\n         Other = toint(coalesce(Cls.definition, 0)) + toint(coalesce(Cls.featurePack, 0)) + toint(coalesce(Cls.servicePack, 0)) + toint(coalesce(Cls.tools, 0)) + toint(coalesce(Cls.updates, 0)),\n         RebootPending = tobool(properties.rebootPending)\n| summarize arg_max(LastAssessed, *) by MachineId\n| extend TotalPending = Critical + Security + UpdateRollups + Other\n| where TotalPending > 0 or RebootPending == true\n| join kind=leftouter (resources | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines') | extend MachineId = tolower(id) | project MachineId, Server = name, ResourceGroup = resourceGroup, PatchGroup = tostring(tags['{PatchGroupTag}']), Owner = tostring(tags['Owner'])) on MachineId\n| project Server, ResourceGroup, PatchGroup, Owner, Critical, Security, UpdateRollups, Other, TotalPending, RebootPending, LastAssessed, MachineId\n| order by Critical desc, Security desc, TotalPending desc",
+              "size": 0,
+              "title": "Pending updates by server",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "Critical", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0 } },
+                  { "columnMatch": "Security", "formatter": 8, "formatOptions": { "palette": "orange", "min": 0 } },
+                  { "columnMatch": "TotalPending", "formatter": 8, "formatOptions": { "palette": "blue", "min": 0 } },
+                  { "columnMatch": "RebootPending", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [ { "operator": "==", "thresholdValue": "true", "representation": "error", "text": "Yes" }, { "operator": "Default", "representation": "success", "text": "No" } ] } }
+                ],
+                "filter": true,
+                "sortBy": [ { "itemKey": "Critical", "sortOrder": 2 } ]
+              }
+            },
+            "name": "pending-by-server"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "patchassessmentresources\n| where type endswith 'patchassessmentresults/softwarepatches'\n| extend MachineId = tolower(tostring(split(id, '/patchAssessmentResults/')[0])),\n         PatchName    = tostring(properties.patchName),\n         KBId         = tostring(properties.kbId),\n         Classification = tostring(properties.classifications[0]),\n         Published    = todatetime(coalesce(properties.publishedDate, properties.lastModifiedDateTime))\n| extend Label = strcat(iif(isempty(KBId),'',strcat('KB', KBId, ' \u2014 ')), PatchName)\n| summarize Machines = dcount(MachineId), FirstSeen = min(Published), LastSeen = max(Published), Classifications = make_set(Classification) by Label\n| extend AgeDays = datetime_diff('day', now(), FirstSeen)\n| order by Machines desc\n| take 25",
+              "size": 0,
+              "title": "Top pending KBs across the estate (machines awaiting each KB)",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "Machines", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0 } },
+                  { "columnMatch": "AgeDays", "formatter": 8, "formatOptions": { "palette": "orange", "min": 0 } }
+                ],
+                "filter": true
+              }
+            },
+            "customWidth": "60",
+            "name": "pending-top-kbs"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "patchassessmentresources\n| where type endswith 'patchassessmentresults/softwarepatches'\n| extend Classification = tostring(properties.classifications[0])\n| where isnotempty(Classification)\n| summarize Pending = count() by Classification\n| order by Pending desc",
+              "size": 0,
+              "title": "Pending updates by classification",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "visualization": "piechart"
+            },
+            "customWidth": "40",
+            "name": "pending-by-class"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "patchassessmentresources\n| where type endswith 'patchassessmentresults/softwarepatches'\n| extend PatchName    = tostring(properties.patchName),\n         KBId         = tostring(properties.kbId),\n         Classification = tostring(properties.classifications[0]),\n         Published    = todatetime(coalesce(properties.publishedDate, properties.lastModifiedDateTime)),\n         MachineId    = tolower(tostring(split(id, '/patchAssessmentResults/')[0]))\n| where Classification in ('Critical','Security','UpdateRollups')\n| where Published > ago(45d)\n| extend Label = strcat(iif(isempty(KBId),'',strcat('KB', KBId, ' \u2014 ')), PatchName)\n| summarize Machines = dcount(MachineId), Published = min(Published) by Label, Classification\n| extend AgeDays = datetime_diff('day', now(), Published)\n| order by Published desc",
+              "size": 0,
+              "title": "Recently published pending KBs (last 45 days, Critical/Security/UpdateRollups) \u2014 candidate signal for a new Microsoft CU",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "Machines", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0 } }
+                ],
+                "filter": true
+              }
+            },
+            "name": "pending-recent"
+          }
+        ]
+      },
+      "conditionalVisibility": { "parameterName": "selectedTab", "comparison": "isEqualTo", "value": "pending" },
+      "name": "group-pending"
+    },
+
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
+            "content": { "json": "## Failures\nWhat did Azure Update Manager **try** to install, and what failed? Top row shows run-level failures with the error returned by the agent; second row drills into the individual KBs that didn't install, so you can see whether a single update is blocking a whole patch group or whether it's a one-off." },
+            "name": "fail-title"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "patchinstallationresources\n| where type =~ 'microsoft.hybridcompute/machines/patchinstallationresults' or type =~ 'microsoft.compute/virtualmachines/patchinstallationresults'\n| extend MachineId = tolower(tostring(split(id, '/patchInstallationResults/')[0]))\n| extend StartedOn = todatetime(properties.startDateTime),\n         CompletedOn = todatetime(properties.lastModifiedDateTime),\n         Status = tostring(properties.status),\n         RebootStatus = tostring(properties.rebootStatus),\n         Installed = toint(properties.installedPatchCount),\n         Failed    = toint(properties.failedPatchCount),\n         Pending   = toint(properties.pendingPatchCount),\n         Excluded  = toint(properties.excludedPatchCount),\n         ErrorCode = tostring(properties.errorDetails.code),\n         ErrorMessage = tostring(properties.errorDetails.message)\n| where StartedOn > todatetime('{Lookback:startISO}')\n| summarize arg_max(StartedOn, *) by MachineId\n| where Status !~ 'Succeeded' or Failed > 0\n| extend Expected = Installed + Failed + Pending + Excluded\n| join kind=leftouter (resources | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines') | extend MachineId = tolower(id) | project MachineId, Server = name, ResourceGroup = resourceGroup, PatchGroup = tostring(tags['{PatchGroupTag}']), Owner = tostring(tags['Owner'])) on MachineId\n| project Server, ResourceGroup, PatchGroup, Owner, StartedOn, CompletedOn, Status, RebootStatus, Expected, Installed, Failed, Pending, Excluded, ErrorCode, ErrorMessage, MachineId\n| order by StartedOn desc",
+              "size": 0,
+              "title": "Run-level failures (last {Lookback:label})",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "Status", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [ { "operator": "==", "thresholdValue": "Failed", "representation": "redBright", "text": "{0}" }, { "operator": "==", "thresholdValue": "CompletedWithWarnings", "representation": "orange", "text": "{0}" }, { "operator": "Default", "representation": "blue", "text": "{0}" } ] } },
+                  { "columnMatch": "Failed", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0 } },
+                  { "columnMatch": "ErrorMessage", "formatter": 1 }
+                ],
+                "filter": true,
+                "sortBy": [ { "itemKey": "StartedOn", "sortOrder": 2 } ]
+              }
+            },
+            "name": "fail-runs"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "patchinstallationresources\n| where type endswith 'patchinstallationresults/softwarepatches'\n| extend RunId = tolower(tostring(split(id, '/softwarePatches/')[0])),\n         MachineId = tolower(tostring(split(id, '/patchInstallationResults/')[0]))\n| extend PatchName     = tostring(properties.patchName),\n         KBId          = tostring(properties.kbId),\n         Classification= tostring(properties.classifications[0]),\n         PatchStatus   = tostring(properties.status),\n         InstallState  = tostring(properties.installationState),\n         LastModified  = todatetime(properties.lastModifiedDateTime)\n| where LastModified > todatetime('{Lookback:startISO}')\n| where PatchStatus !~ 'Installed' and InstallState !~ 'Installed'\n| join kind=leftouter (resources | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines') | extend MachineId = tolower(id) | project MachineId, Server = name, ResourceGroup = resourceGroup, PatchGroup = tostring(tags['{PatchGroupTag}'])) on MachineId\n| project LastModified, Server, ResourceGroup, PatchGroup, PatchName, KBId, Classification, PatchStatus, InstallState, MachineId, RunId\n| order by LastModified desc",
+              "size": 0,
+              "title": "Per-patch failures \u2014 KBs that didn't install",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "PatchStatus", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [ { "operator": "==", "thresholdValue": "Failed", "representation": "redBright", "text": "{0}" }, { "operator": "==", "thresholdValue": "Excluded", "representation": "gray", "text": "{0}" }, { "operator": "Default", "representation": "orange", "text": "{0}" } ] } }
+                ],
+                "filter": true
+              }
+            },
+            "customWidth": "60",
+            "name": "fail-patches"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "patchinstallationresources\n| where type endswith 'patchinstallationresults/softwarepatches'\n| extend PatchName    = tostring(properties.patchName),\n         KBId         = tostring(properties.kbId),\n         PatchStatus  = tostring(properties.status),\n         InstallState = tostring(properties.installationState),\n         LastModified = todatetime(properties.lastModifiedDateTime)\n| where LastModified > todatetime('{Lookback:startISO}')\n| where PatchStatus =~ 'Failed' or InstallState =~ 'Failed'\n| extend Label = strcat(iif(isempty(KBId),'',strcat('KB', KBId, ' — ')), PatchName)\n| summarize Failures = count() by Label\n| top 15 by Failures",
+              "size": 0,
+              "title": "Top failing KBs (last {Lookback:label})",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [ "{Subscriptions}" ],
+              "visualization": "barchart"
+            },
+            "customWidth": "40",
+            "name": "fail-top-kbs"
+          }
+        ]
+      },
+      "conditionalVisibility": { "parameterName": "selectedTab", "comparison": "isEqualTo", "value": "failures" },
+      "name": "group-failures"
+    },
+
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
             "content": { "json": "## Patch Groups / Collections\nMirrors the existing SCCM patch group model via the **`{PatchGroupTag}`** tag. Use this view to identify which collections aren't keeping cadence.\n\n> **Not using tags yet?** Everything will appear under a single `(untagged)` row — that's your estate-wide baseline. As you start tagging machines with `{PatchGroupTag}=<collection>`, they'll segment into separate rows automatically." },
             "name": "groups-title"
           },
@@ -444,64 +688,6 @@
       },
       "conditionalVisibility": { "parameterName": "selectedTab", "comparison": "isEqualTo", "value": "groups" },
       "name": "group-groups"
-    },
-
-    {
-      "type": 12,
-      "content": {
-        "version": "NotebookGroup/1.0",
-        "groupType": "editable",
-        "items": [
-          {
-            "type": 1,
-            "content": { "json": "## Exceptions\nActionable lists for follow-up: manual reboots, delayed systems, and n-1 approved production servers." },
-            "name": "exc-title"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "patchassessmentresources\n| extend MachineId = tolower(tostring(split(id, '/patchAssessmentResults/')[0]))\n| extend RebootPending = tobool(properties.rebootPending), LastAssessed = todatetime(properties.lastModifiedDateTime)\n| summarize arg_max(LastAssessed, RebootPending) by MachineId\n| where RebootPending == true\n| join kind=inner (resources | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines') | extend MachineId = tolower(id) | project MachineId, Server = name, ResourceGroup = resourceGroup, PatchGroup = tostring(tags['{PatchGroupTag}']), Owner = tostring(tags['Owner'])) on MachineId\n| project Server, ResourceGroup, PatchGroup, Owner, LastAssessed, MachineId\n| order by LastAssessed asc",
-              "size": 0,
-              "title": "Manual reboot required",
-              "queryType": 1,
-              "resourceType": "microsoft.resourcegraph/resources",
-              "crossComponentResources": [ "{Subscriptions}" ]
-            },
-            "customWidth": "50",
-            "name": "exc-reboot"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "patchinstallationresources\n| where type =~ 'microsoft.hybridcompute/machines/patchinstallationresults' or type =~ 'microsoft.compute/virtualmachines/patchinstallationresults'\n| extend MachineId = tolower(tostring(split(id, '/patchInstallationResults/')[0]))\n| extend Status = tostring(properties.status), CompletedOn = todatetime(properties.lastModifiedDateTime)\n| summarize LastSuccess = maxif(CompletedOn, Status =~ 'Succeeded'), LastFailure = maxif(CompletedOn, Status =~ 'Failed') by MachineId\n| where isnull(LastSuccess) or LastSuccess < ago(35d)\n| join kind=inner (resources | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines') | extend MachineId = tolower(id) | project MachineId, Server = name, ResourceGroup = resourceGroup, PatchGroup = tostring(tags['{PatchGroupTag}']), Owner = tostring(tags['Owner'])) on MachineId\n| project Server, ResourceGroup, PatchGroup, Owner, LastSuccess, LastFailure, MachineId\n| order by LastSuccess asc",
-              "size": 0,
-              "title": "Delayed: no successful install in 35 days",
-              "queryType": 1,
-              "resourceType": "microsoft.resourcegraph/resources",
-              "crossComponentResources": [ "{Subscriptions}" ]
-            },
-            "customWidth": "50",
-            "name": "exc-delayed"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n| extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n| extend OSVersion = case(\n    osVersion startswith '10.0.14393' or osName has '2016','Windows Server 2016',\n    osVersion startswith '10.0.17763' or osName has '2019','Windows Server 2019',\n    osVersion startswith '10.0.20348' or osName has '2022','Windows Server 2022',\n    osVersion startswith '10.0.26100' or osName has '2025','Windows Server 2025',\n    osVersion startswith '6.3.9600','Windows Server 2012 R2',\n    'Other')\n| extend Env = tostring(tags['{EnvironmentTag}']), PatchGroup = tostring(tags['{PatchGroupTag}']), MachineId = tolower(id), Server = name, RG = resourceGroup, Build = iif(isempty(osVersion),'Unknown', osVersion)\n| join kind=leftouter (\n    resources\n    | where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n    | extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n    | where osType == 'windows'\n    | extend osName = tostring(coalesce(properties.osName, properties.osProfile.windowsConfiguration.osName))\n    | extend osVersion = tostring(coalesce(properties.osVersion, properties.osProfile.windowsConfiguration.osVersion))\n    | extend OSVersion = case(\n        osVersion startswith '10.0.14393' or osName has '2016','Windows Server 2016',\n        osVersion startswith '10.0.17763' or osName has '2019','Windows Server 2019',\n        osVersion startswith '10.0.20348' or osName has '2022','Windows Server 2022',\n        osVersion startswith '10.0.26100' or osName has '2025','Windows Server 2025',\n        osVersion startswith '6.3.9600','Windows Server 2012 R2',\n        'Other')\n    | where isnotempty(osVersion)\n    | summarize TargetBuild = max(osVersion) by OSVersion\n) on OSVersion\n| extend IsProd = (tolower(Env) == tolower('{ProdTagValue}'))\n| extend DriftRevisions = toint(tostring(split(TargetBuild,'.')[3])) - toint(tostring(split(Build,'.')[3]))\n| where IsProd and DriftRevisions >= 1\n| project Server, ResourceGroup = RG, OSVersion, Build, TargetBuild, DriftRevisions, PatchGroup, MachineId",
-              "size": 0,
-              "title": "Production n-1 (approved exception)",
-              "queryType": 1,
-              "resourceType": "microsoft.resourcegraph/resources",
-              "crossComponentResources": [ "{Subscriptions}" ]
-            },
-            "name": "exc-nminus1"
-          }
-        ]
-      },
-      "conditionalVisibility": { "parameterName": "selectedTab", "comparison": "isEqualTo", "value": "exceptions" },
-      "name": "group-exceptions"
     },
 
     {
@@ -563,15 +749,14 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend HasEnvTag    = isnotempty(tostring(tags['{EnvironmentTag}'])),\n         HasPatchGroup = isnotempty(tostring(tags['{PatchGroupTag}'])),\n         HasOwner      = isnotempty(tostring(tags['Owner']))\n| summarize Servers = count(),\n            [\"{EnvironmentTag} tagged\"] = countif(HasEnvTag),\n            [\"{PatchGroupTag} tagged\"] = countif(HasPatchGroup),\n            [\"Owner tagged\"]            = countif(HasOwner)\n| extend [\"Env coverage %\"]   = round(100.0 * [\"{EnvironmentTag} tagged\"] / Servers, 1),\n         [\"Group coverage %\"] = round(100.0 * [\"{PatchGroupTag} tagged\"] / Servers, 1),\n         [\"Owner coverage %\"] = round(100.0 * [\"Owner tagged\"] / Servers, 1)\n| project Servers, [\"Env coverage %\"], [\"Group coverage %\"], [\"Owner coverage %\"]",
+              "query": "resources\n| where type in~ ('microsoft.hybridcompute/machines','microsoft.compute/virtualmachines')\n| extend osType = tolower(coalesce(tostring(properties.osType), tostring(properties.storageProfile.osDisk.osType)))\n| where osType == 'windows'\n| where '*' in~ ({ResourceGroups}) or resourceGroup in~ ({ResourceGroups})\n| extend HasPatchGroup = isnotempty(tostring(tags['{PatchGroupTag}'])),\n         HasOwner      = isnotempty(tostring(tags['Owner']))\n| summarize Servers = count(),\n            [\"{PatchGroupTag} tagged\"] = countif(HasPatchGroup),\n            [\"Owner tagged\"]            = countif(HasOwner)\n| extend [\"Group coverage %\"] = round(100.0 * [\"{PatchGroupTag} tagged\"] / Servers, 1),\n         [\"Owner coverage %\"] = round(100.0 * [\"Owner tagged\"] / Servers, 1)\n| project Servers, [\"Group coverage %\"], [\"Owner coverage %\"]",
               "size": 0,
-              "title": "Tag coverage (track adoption of {EnvironmentTag} / {PatchGroupTag} / Owner)",
+              "title": "Tag coverage (track adoption of {PatchGroupTag} / Owner)",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [ "{Subscriptions}" ],
               "gridSettings": {
                 "formatters": [
-                  { "columnMatch": "Env coverage %",   "formatter": 8, "formatOptions": { "palette": "redGreen", "min": 0, "max": 100 } },
                   { "columnMatch": "Group coverage %", "formatter": 8, "formatOptions": { "palette": "redGreen", "min": 0, "max": 100 } },
                   { "columnMatch": "Owner coverage %", "formatter": 8, "formatOptions": { "palette": "redGreen", "min": 0, "max": 100 } }
                 ]
@@ -583,41 +768,6 @@
       },
       "conditionalVisibility": { "parameterName": "selectedTab", "comparison": "isEqualTo", "value": "health" },
       "name": "group-health"
-    },
-
-    {
-      "type": 12,
-      "content": {
-        "version": "NotebookGroup/1.0",
-        "groupType": "editable",
-        "items": [
-          {
-            "type": 1,
-            "content": { "json": "## SCCM Comparison\nThis tab is a **placeholder shell** for the side-by-side comparison once SCCM data is exported to Log Analytics (custom table, e.g. `SCCMCompliance_CL`) or fronted by an Azure Function. The Azure-side numbers come from Update Manager and Arc and refresh within ~30 minutes — use these to spot SCCM reporting lag.\n\nReplace the placeholder query below with one that joins your custom SCCM table." },
-            "name": "sccm-note"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "// Azure-side compliance counts to compare against SCCM\npatchassessmentresources\n| extend MachineId = tolower(tostring(split(id, '/patchAssessmentResults/')[0]))\n| extend Pending = toint(properties.availablePatchCountByClassification.critical) + toint(properties.availablePatchCountByClassification.security), LastAssessed = todatetime(properties.lastModifiedDateTime)\n| summarize arg_max(LastAssessed, Pending) by MachineId\n| summarize AzureCompliant = countif(Pending == 0), AzureNonCompliant = countif(Pending > 0), AzureTotal = count()\n| extend Source = 'Azure / Update Manager', AsOf = now()",
-              "size": 0,
-              "title": "Azure / Update Manager compliance (live)",
-              "queryType": 1,
-              "resourceType": "microsoft.resourcegraph/resources",
-              "crossComponentResources": [ "{Subscriptions}" ]
-            },
-            "name": "sccm-azure"
-          },
-          {
-            "type": 1,
-            "content": { "json": "> **TODO:** Replace below with `SCCMCompliance_CL | summarize ...` once the SCCM feed is wired up. Then `union` the two and pivot by `Source` to render a side-by-side table." },
-            "name": "sccm-todo"
-          }
-        ]
-      },
-      "conditionalVisibility": { "parameterName": "selectedTab", "comparison": "isEqualTo", "value": "sccm" },
-      "name": "group-sccm"
     }
   ],
   "fallbackResourceIds": [ "azure monitor" ],

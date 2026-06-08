@@ -13,13 +13,13 @@ Operational dashboard for **Arc-enabled and Azure VM Windows servers**, built fr
 | # | Tab | Answers |
 |---|-----|---------|
 | 1 | Overview | Total servers, compliant %, reboot-pending, OS mix, pending updates by classification |
-| 2 | OS & Build Inventory | OS → Build → Server drill-down tree; build distribution per OS |
-| 3 | CU Compliance | Per-server target build vs current; tag-driven **production n-1** rule |
-| 4 | Reboot Compliance | Installed vs installed+rebooted; on-time within maintenance window |
-| 5 | Patch Groups | Compliance % grouped by your existing patch group tag |
-| 6 | Exceptions | Manual reboot list, 35-day delayed list, approved n-1 prod list |
-| 7 | Data Health | Arc connection, Update Manager scan freshness, AMA extension state, LA heartbeats |
-| 8 | SCCM Comparison | Live Azure compliance + placeholder for a joined SCCM custom-table query |
+| 2 | OS & Build Inventory | Per-OS server count tiles, Arc vs Azure VM split, OS → Build → Server drill-down tree, build distribution per OS |
+| 3 | CU Compliance | Per-server target build vs current, build distribution per OS with target marked, servers grouped by how many revisions behind, flags any pending Critical/Security/UpdateRollups |
+| 4 | Failures | Run-level failures with Update Manager error code/message, per-patch (KB) failures, top failing KBs |
+| 5 | Pending Updates | What's queued: per-server counts, top KBs across the estate, classification mix, recently published KBs |
+| 6 | Reboot Compliance | Installed vs installed+rebooted; on-time within maintenance window |
+| 7 | Patch Groups | Compliance % grouped by your existing patch group tag |
+| 8 | Data Health | Arc connection, Update Manager scan freshness, AMA extension state, LA heartbeats |
 
 ### Parameters
 
@@ -28,48 +28,16 @@ Operational dashboard for **Arc-enabled and Azure VM Windows servers**, built fr
 | `Subscriptions` | All | ARG cross-subscription scope |
 | `ResourceGroups` | All | Filter to a subset of RGs |
 | `PatchGroupTag` | `PatchGroup` | Tag mirroring your SCCM collection / patch group |
-| `EnvironmentTag` | `Environment` | Tag used to detect production |
-| `ProdTagValue` | `Production` | Value of the env tag that means prod (enables n-1 rule) |
 | `WindowHours` | `4` | Maintenance window length for "on-time reboot" |
 | `Lookback` | 30 days | Window for install/reboot history |
-
-### Tagging convention (Environment / Prod)
-
-`EnvironmentTag` and `ProdTagValue` are two halves of one rule:
-
-- **`EnvironmentTag`** is the tag **key** to read on each server (default `Environment`).
-- **`ProdTagValue`** is the tag **value** that means "this server is production" (default `Production`).
-
-Together they tell the workbook: *"Look at the tag called **Environment**; treat any server whose value is **Production** as prod and apply the n‑1 allowance."*
-
-Example resource tag:
-
-| Key | Value |
-|---|---|
-| `Environment` | `Production` |
-
-If your org tags differently, just change the two parameters once — no KQL edits:
-
-| Your convention | `EnvironmentTag` | `ProdTagValue` |
-|---|---|---|
-| `Environment = Production` (default) | `Environment` | `Production` |
-| `env = prod` | `env` | `prod` |
-| `Tier = PROD` | `Tier` | `PROD` |
-
-Apply the tag with the CLI:
-
-```bash
-az tag update --resource-id <vmOrArcResourceId> --operation merge --tags Environment=Production
-```
-
-Until at least one server carries the tag, the n‑1 rule never fires and every server must be on the latest observed build.
+| `TargetBuilds` | _empty_ | Optional CU pin: `'Windows Server 2022','10.0.20348.2700','Windows Server 2019','10.0.17763.6189'`. Empty = auto-derive from estate. |
 
 ### Prerequisites
 
 - **Arc-enabled servers** onboarded and reporting (`Microsoft.HybridCompute/machines`).
 - **Azure Update Manager periodic assessment** enabled — populates `patchassessmentresources` and `patchinstallationresources` in Azure Resource Graph.
 - **AMA + the DCRs from this repo** deployed (gives the Data Health tab a working `Heartbeat` signal).
-- Optional but recommended: tag servers with `PatchGroup`, `Environment`, and `Owner`.
+- Optional but recommended: tag servers with `PatchGroup` and `Owner`.
 
 ### Deploy options
 
@@ -86,5 +54,4 @@ Wrap the JSON in a `Microsoft.Insights/workbooks` ARM/Bicep resource using the f
 ### Customising
 
 - **Different OS coverage** — extend the `case(...)` branches that derive `OSVersion` if you have Windows Server 2025 / 2012 / non-standard images.
-- **CU target source** — by default the workbook treats the **highest build observed in your estate** per OS as the target. To pin to a published CU build, replace the `targets` let with a hard-coded table.
-- **SCCM join** — once SCCM compliance is shipped to Log Analytics (custom log, e.g. `SCCMCompliance_CL`), replace the placeholder block on tab 8 with a `union` against the Azure-side query and pivot by `Source`.
+- **CU target source** — by default the workbook treats the **highest build observed in your estate** per OS as the target (column `TargetSource = estate`). To pin to Microsoft's published build, fill in the **Target builds (override)** parameter on the CU Compliance tab — those OSes will then show `TargetSource = override`. There is no ARG/Update Manager field that exposes Microsoft's current published CU build per OS, so this override is the supported way to stay in sync with the AUM release cycle.
