@@ -1,0 +1,44 @@
+{
+  "effect": {
+    "type": "String",
+    "metadata": {
+      "displayName": "Effect",
+      "description": "DeployIfNotExists installs the Hybrid Worker extension and registers the machine. AuditIfNotExists only reports machines that are not yet onboarded. Disabled turns the policy off."
+    },
+    "allowedValues": [
+      "DeployIfNotExists",
+      "AuditIfNotExists",
+      "Disabled"
+    ],
+    "defaultValue": "DeployIfNotExists"
+  },
+  "automationAccountName": {
+    "type": "String",
+    "metadata": {
+      "displayName": "Automation Account name",
+      "description": "Name of the Automation Account that hosts the Relocate-IISLogs runbook."
+    }
+  },
+  "automationAccountResourceGroup": {
+    "type": "String",
+    "metadata": {
+      "displayName": "Automation Account resource group",
+      "description": "Resource group that contains the Automation Account."
+    }
+  },
+  "hybridWorkerGroupName": {
+    "type": "String",
+    "metadata": {
+      "displayName": "Hybrid Worker group name",
+      "description": "Hybrid Runbook Worker group the machines join. Created if it does not exist."
+    },
+    "defaultValue": "iis-servers"
+  },
+  "automationHybridServiceUrl": {
+    "type": "String",
+    "metadata": {
+      "displayName": "Automation hybrid service URL",
+      "description": "The Automation Account's automationHybridServiceUrl (properties.automationHybridServiceUrl). The assign script reads this automatically."
+    }
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "if": {
+    "allOf": [
+      {
+        "field": "type",
+        "equals": "Microsoft.HybridCompute/machines"
+      },
+      {
+        "field": "Microsoft.HybridCompute/machines/osName",
+        "equals": "windows"
+      }
+    ]
+  },
+  "then": {
+    "effect": "[parameters('effect')]",
+    "details": {
+      "type": "Microsoft.HybridCompute/machines/extensions",
+      "roleDefinitionIds": [
+        "/providers/Microsoft.Authorization/roleDefinitions/cd570a14-e51a-42ad-bac8-bafd67325302",
+        "/providers/Microsoft.Authorization/roleDefinitions/f353d9bd-d4a6-484e-a77a-8050b599b867"
+      ],
+      "existenceCondition": {
+        "allOf": [
+          {
+            "field": "Microsoft.HybridCompute/machines/extensions/type",
+            "equals": "HybridWorkerForWindows"
+          },
+          {
+            "field": "Microsoft.HybridCompute/machines/extensions/publisher",
+            "equals": "Microsoft.Azure.Automation.HybridWorker"
+          }
+        ]
+      },
+      "deployment": {
+        "properties": {
+          "mode": "incremental",
+          "parameters": {
+            "machineName": { "value": "[field('name')]" },
+            "location": { "value": "[field('location')]" },
+            "vmResourceId": { "value": "[field('id')]" },
+            "automationAccountName": { "value": "[parameters('automationAccountName')]" },
+            "automationAccountResourceGroup": { "value": "[parameters('automationAccountResourceGroup')]" },
+            "hybridWorkerGroupName": { "value": "[parameters('hybridWorkerGroupName')]" },
+            "automationHybridServiceUrl": { "value": "[parameters('automationHybridServiceUrl')]" }
+          },
+          "template": {
+            "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+            "contentVersion": "1.0.0.0",
+            "parameters": {
+              "machineName": { "type": "string" },
+              "location": { "type": "string" },
+              "vmResourceId": { "type": "string" },
+              "automationAccountName": { "type": "string" },
+              "automationAccountResourceGroup": { "type": "string" },
+              "hybridWorkerGroupName": { "type": "string" },
+              "automationHybridServiceUrl": { "type": "string" }
+            },
+            "variables": {
+              "workerId": "[guid(parameters('vmResourceId'))]",
+              "hrwRegistrationName": "[concat('hrw-reg-', parameters('machineName'))]"
+            },
+            "resources": [
+              {
+                "comments": "Register the machine into the Hybrid Worker group. This lives in the Automation Account's resource group, so it is deployed via a nested deployment scoped to that RG (expression scope = outer to reuse the parent parameters/variables).",
+                "type": "Microsoft.Resources/deployments",
+                "apiVersion": "2021-04-01",
+                "name": "[variables('hrwRegistrationName')]",
+                "resourceGroup": "[parameters('automationAccountResourceGroup')]",
+                "properties": {
+                  "mode": "Incremental",
+                  "expressionEvaluationOptions": { "scope": "outer" },
+                  "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "resources": [
+                      {
+                        "type": "Microsoft.Automation/automationAccounts/hybridRunbookWorkerGroups",
+                        "apiVersion": "2022-08-08",
+                        "name": "[concat(parameters('automationAccountName'), '/', parameters('hybridWorkerGroupName'))]"
+                      },
+                      {
+                        "type": "Microsoft.Automation/automationAccounts/hybridRunbookWorkerGroups/hybridRunbookWorkers",
+                        "apiVersion": "2022-08-08",
+                        "name": "[concat(parameters('automationAccountName'), '/', parameters('hybridWorkerGroupName'), '/', variables('workerId'))]",
+                        "dependsOn": [
+                          "[resourceId('Microsoft.Automation/automationAccounts/hybridRunbookWorkerGroups', parameters('automationAccountName'), parameters('hybridWorkerGroupName'))]"
+                        ],
+                        "properties": {
+                          "vmResourceId": "[parameters('vmResourceId')]"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "comments": "Install the extension-based Hybrid Worker on the Arc machine. Depends on the group registration so the worker joins the correct group on first heartbeat.",
+                "type": "Microsoft.HybridCompute/machines/extensions",
+                "apiVersion": "2022-12-27",
+                "name": "[concat(parameters('machineName'), '/HybridWorkerExtension')]",
+                "location": "[parameters('location')]",
+                "dependsOn": [
+                  "[resourceId('Microsoft.Resources/deployments', variables('hrwRegistrationName'))]"
+                ],
+                "properties": {
+                  "publisher": "Microsoft.Azure.Automation.HybridWorker",
+                  "type": "HybridWorkerForWindows",
+                  "typeHandlerVersion": "1.1",
+                  "autoUpgradeMinorVersion": true,
+                  "enableAutomaticUpgrade": true,
+                  "settings": {
+                    "AutomationAccountURL": "[parameters('automationHybridServiceUrl')]"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
